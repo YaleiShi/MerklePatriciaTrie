@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"./p1"
 )
 
 func main() {

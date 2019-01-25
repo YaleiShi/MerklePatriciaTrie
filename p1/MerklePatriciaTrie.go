@@ -1,11 +1,10 @@
 package p1
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"golang.org/x/crypto/sha3"
 	"reflect"
-	"strings"
 )
 
 type Flag_value struct {
@@ -26,6 +25,7 @@ type MerklePatriciaTrie struct {
 
 func (mpt *MerklePatriciaTrie) Get(key string) string {
 	// TODO
+	return ""
 }
 
 func (mpt *MerklePatriciaTrie) Insert(key string, new_value string) {
@@ -38,11 +38,13 @@ func (mpt *MerklePatriciaTrie) Delete(key string) {
 
 func compact_encode(hex_array []uint8) []uint8 {
 	// TODO
+	return []uint8{}
 }
 
 // If Leaf, ignore 16 at the end
 func compact_decode(encoded_arr []uint8) []uint8 {
 	// TODO
+	return []uint8{}
 }
 
 func test_compact_encode() {
@@ -65,6 +67,7 @@ func (node *Node) hash_node() string {
 	case 2:
 		str = node.flag_value.value
 	}
-	sum := sha256.Sum256([]byte(str))
+
+	sum := sha3.Sum256([]byte(str))
 	return "HashStart_" + hex.EncodeToString(sum[:]) + "_HashEnd"
 }
