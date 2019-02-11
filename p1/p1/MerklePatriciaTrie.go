@@ -34,9 +34,9 @@ func (mpt *MerklePatriciaTrie) Insert(key string, new_value string) {
 	// TODO
 }
 
-func (mpt *MerklePatriciaTrie) Delete(key string) error {
+func (mpt *MerklePatriciaTrie) Delete(key string) (string, error) {
 	// TODO
-	return errors.New("path_not_found")
+	return "", errors.New("path_not_found")
 }
 
 func compact_encode(hex_array []uint8) []uint8 {
