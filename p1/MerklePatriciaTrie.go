@@ -32,6 +32,7 @@ func (mpt *MerklePatriciaTrie) Get(key string) (string, error) {
 }
 
 func (mpt *MerklePatriciaTrie) getHelper(hexPath []uint8, node Node) string {
+	//fmt.Println("searching path: ", node.String())
 	if node.node_type == 0 {
 		return ""
 	}
@@ -175,7 +176,7 @@ func (mpt *MerklePatriciaTrie) insertHelper(hashValue string, path []uint8, valu
 				path = path[common:]
 				newBrNodeHash := mpt.insertHelper("", path, value, newBranchNode)
 				node.flag_value.value = newBrNodeHash
-				delete(mpt.db, hashValue)
+				//delete(mpt.db, hashValue)
 				newHash := node.hash_node()
 				mpt.db[newHash] = node
 				return newHash
@@ -196,20 +197,41 @@ func (mpt *MerklePatriciaTrie) insertHelper(hashValue string, path []uint8, valu
 			// make a new branch node, insert the old value and new value to the branch node
 			var branchNode Node
 			branchNode.node_type = 1
-			var branchHash string
-			branchHash = mpt.insertHelper("", restDecode, oldValue, branchNode)
-			branchHash = mpt.insertHelper(branchHash, restPath, value, branchNode)
+			// update the branch to add the old value
+			if len(restDecode) == 0 {
+				branchNode.branch_value[16] = oldValue
+			} else {
+				first := restDecode[0]
+				restDecode = restDecode[1:]
+
+				newLeafHash, newLeaf := newLeaf(restDecode, oldValue)
+				mpt.db[newLeafHash] = newLeaf
+				branchNode.branch_value[first] = newLeafHash
+
+			}
+
+			if len(restPath) == 0 {
+				branchNode.branch_value[16] = value
+			} else {
+				first := restPath[0]
+				restPath = restPath[1:]
+
+				newLeafHash, newLeaf := newLeaf(restPath, value)
+				mpt.db[newLeafHash] = newLeaf
+				branchNode.branch_value[first] = newLeafHash
+
+			}
 
 			if common == 0 {
 				// directly change the node to a branch node, insert the old value and new value to the branch node
 				node = branchNode
-				delete(mpt.db, hashValue)
-				return branchHash
+				return mpt.updateNode(node, "")
 			}
 			// change the node to a extension node
 			node.flag_value.encoded_prefix = compact_encode(prefix)
-			node.flag_value.value = branchHash
-			return mpt.updateNode(node, hashValue)
+			node.flag_value.value = branchNode.hash_node()
+			mpt.db[branchNode.hash_node()] = branchNode
+			return mpt.updateNode(node, "")
 		}
 	}
 
@@ -234,11 +256,13 @@ func (mpt *MerklePatriciaTrie) insertHelper(hashValue string, path []uint8, valu
 }
 
 func (mpt *MerklePatriciaTrie) updateNode(node Node, oldHash string) string {
-	if oldHash != "" {
-		delete(mpt.db, oldHash)
-	}
+	//if oldHash != "" {
+	//	fmt.Println(oldHash)
+	//	delete(mpt.db, oldHash)
+	//}
 	newHash := node.hash_node()
 	mpt.db[newHash] = node
+
 	return newHash
 }
 
@@ -297,6 +321,7 @@ func (mpt *MerklePatriciaTrie) deleteHelper(oldHash string, path []uint8, node N
 				nextHash := node.flag_value.value
 				nextNode := mpt.db[nextHash]
 				newNextHash, nextNodeType := mpt.deleteHelper(nextHash, nextPath, nextNode)
+				nextNode = mpt.db[newNextHash]
 
 				if nextNodeType == -1 { // still not found below
 					return oldHash, -1
@@ -307,7 +332,7 @@ func (mpt *MerklePatriciaTrie) deleteHelper(oldHash string, path []uint8, node N
 				}
 				if nextNodeType == 2 || nextNodeType == 3 { // next is leaf node or extension node, need to be changed
 					nextLeafValue := nextNode.flag_value.value
-					nextLeafDecode := compact_encode(nextNode.flag_value.encoded_prefix)
+					nextLeafDecode := compact_decode(nextNode.flag_value.encoded_prefix)
 					delete(mpt.db, newNextHash)
 
 					node.flag_value.value = nextLeafValue
@@ -316,6 +341,7 @@ func (mpt *MerklePatriciaTrie) deleteHelper(oldHash string, path []uint8, node N
 						decode = append(decode, 16)
 					}
 					node.flag_value.encoded_prefix = compact_encode(decode)
+					fmt.Println("this node ***** : ", node.String())
 					return mpt.updateNode(node, oldHash), nextNodeType
 				}
 
@@ -379,10 +405,10 @@ func (mpt *MerklePatriciaTrie) deleteHelper(oldHash string, path []uint8, node N
 		node.branch_value[loc] = ""
 		node.flag_value.value = nextNodeValue
 		prefix := append([]uint8{uint8(loc)}, nextNodeDecode...)
-		var resType int = 2
+		var resType int = 3
 		if nextNodeEncode[0]/16 >= 2 { // leaf
 			prefix = append(prefix, 16)
-			resType = 3
+			resType = 2
 		}
 		node.flag_value.encoded_prefix = compact_encode(prefix)
 		delete(mpt.db, nextNodeHash)
@@ -394,7 +420,7 @@ func (mpt *MerklePatriciaTrie) deleteHelper(oldHash string, path []uint8, node N
 		node.branch_value[loc] = ""
 		node.flag_value.value = nextNodeHash
 		node.flag_value.encoded_prefix = compact_encode([]uint8{uint8(loc)})
-		return mpt.updateNode(node, oldHash), 1
+		return mpt.updateNode(node, oldHash), 3
 	}
 
 	return oldHash, -1
@@ -419,19 +445,25 @@ func (node *Node) checkNumLeaf() int {
 	return -1
 }
 
-func (mpt *MerklePatriciaTrie) Test(key string) {
-	//fmt.Println(mpt.db[""].node_type)
-	var node Node
-	fmt.Println(mpt.db[node.branch_value[3]].String())
-	//hex1 := getHexArray(key)
-	//fmt.Println(hex1)
-	//
-	//hex2 := compact_encode(hex1)
-	//fmt.Println(hex2)
+//func (mpt *MerklePatriciaTrie) Test(key string) {
+//	//fmt.Println(mpt.db[""].node_type)
+//	var node Node
+//	fmt.Println(mpt.db[node.branch_value[3]].String())
+//	//hex1 := getHexArray(key)
+//	//fmt.Println(hex1)
+//	//
+//	//hex2 := compact_encode(hex1)
+//	//fmt.Println(hex2)
+//
+//	//hex3 := compact_encode([]uint8{1,1,2,3,4,5,})
+//	//fmt.Println(hex3)
+//	//test_compact_encode()
+//}
 
-	//hex3 := compact_encode([]uint8{1,1,2,3,4,5,})
-	//fmt.Println(hex3)
-	//test_compact_encode()
+func (mpt *MerklePatriciaTrie) MyTest() {
+	mpt.Initial()
+	mpt.Insert("p", "apple")
+	mpt.Insert("aa", "banana")
 }
 
 func getHexArray(key string) []uint8 {
@@ -442,6 +474,7 @@ func getHexArray(key string) []uint8 {
 		last := i % 16
 		res = append(res, first, last)
 	}
+	fmt.Println("key: ", key, " hex: ", res)
 	return res
 }
 
@@ -461,7 +494,7 @@ func compact_encode(hex_array []uint8) []uint8 {
 	} else {
 		hex_array = append([]uint8{uint8(flags), 0}, hex_array...)
 	}
-	fmt.Println(hex_array)
+	//fmt.Println(hex_array)
 	var res []uint8
 	for i := 0; i < len(hex_array); i += 2 {
 		res = append(res, 16*hex_array[i]+hex_array[i+1])
@@ -473,8 +506,9 @@ func compact_encode(hex_array []uint8) []uint8 {
 func compact_decode(encoded_arr []uint8) []uint8 {
 	// TODO
 	var res []uint8
+	//fmt.Println("test encoded arr: ", encoded_arr)
 	flag := encoded_arr[0]
-	oddlen := flag % 2
+	oddlen := flag / 16 % 2
 	for _, i := range encoded_arr {
 		first := i / 16
 		last := i % 16
@@ -591,5 +625,6 @@ func (mpt *MerklePatriciaTrie) Order_nodes() string {
 			queue = append(queue, strings.Split(each, "HashEnd")[0])
 		}
 	}
+	rs = strings.Replace(rs, "\n", "\r\n", -1)
 	return rs
 }
