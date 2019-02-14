@@ -99,10 +99,147 @@ func (mpt *MerklePatriciaTrie) insertHelper(hashValue string, path []uint8, valu
 		mpt.db[newHashNodeValue] = node
 		return newHashNodeValue
 	}
+
+	if node.node_type == 2 {
+		encodedPrefix := node.flag_value.encoded_prefix
+		decode := compact_decode(encodedPrefix)
+		n := len(decode)
+		lenPath := len(path)
+		var common int
+		for common = 0; common < n && common < lenPath; common++ {
+			if path[common] != decode[common] {
+				break
+			}
+		}
+
+		if encodedPrefix[0]/16 < 2 { // extension
+			// this is a extension node
+			nextHash := node.flag_value.value
+			nextNode := mpt.db[nextHash]
+			if common == n {
+				// common = n go down
+				path = path[common:]
+
+				newNextHash := mpt.insertHelper(nextHash, path, value, nextNode)
+				node.flag_value.value = newNextHash
+
+				newHash := node.hash_node()
+				delete(mpt.db, hashValue)
+				mpt.db[newHash] = node
+				return newHash
+			} else if common == 0 {
+				// common = 0 switch to branch
+				node.node_type = 1
+				node.flag_value.value = ""
+				node.flag_value.encoded_prefix = []uint8{}
+
+				if len(decode) == 1 {
+					node.branch_value[decode[0]] = nextHash
+				} else {
+					i := decode[0]
+					decode = decode[1:]
+					var newExNode Node
+					newExNode.node_type = 2
+					newExNode.flag_value.encoded_prefix = compact_encode(decode)
+					newExNode.flag_value.value = nextHash
+					newExNodeHash := newExNode.hash_node()
+					mpt.db[newExNodeHash] = newExNode
+
+					node.branch_value[i] = newExNodeHash
+				}
+				newHash := mpt.insertHelper(hashValue, path, value, node)
+				return newHash
+			} else {
+				// else common = prefix , rest new branch
+				leftDecode := decode[:common]
+				node.flag_value.encoded_prefix = compact_encode(leftDecode)
+
+				var newBranchNode Node
+				newBranchNode.node_type = 1
+				rightDecode := decode[common:]
+
+				if len(rightDecode) == 1 {
+					newBranchNode.branch_value[rightDecode[0]] = nextHash
+				} else {
+					var newExNode Node
+					newExNode.node_type = 2
+					prefix := rightDecode[1:]
+					newExNode.flag_value.encoded_prefix = compact_encode(prefix)
+					newExNode.flag_value.value = nextHash
+					newExNodeHash := newExNode.hash_node()
+					mpt.db[newExNodeHash] = newExNode
+
+					newBranchNode.branch_value[rightDecode[0]] = newExNodeHash
+				}
+
+				path = path[common:]
+				newBrNodeHash := mpt.insertHelper("", path, value, newBranchNode)
+				node.flag_value.value = newBrNodeHash
+				delete(mpt.db, hashValue)
+				newHash := node.hash_node()
+				mpt.db[newHash] = node
+				return newHash
+			}
+
+			//
+		} else { // leaf
+			if lenPath == n && common == n { //completely same
+				node.flag_value.value = value
+				return mpt.updateNode(node, hashValue)
+			}
+			// not same, first get the common hex and the rest of decode, rest of path
+			prefix := decode[:common]
+			restDecode := decode[common:]
+			restPath := path[common:]
+			oldValue := node.flag_value.value
+
+			// make a new branch node, insert the old value and new value to the branch node
+			var branchNode Node
+			branchNode.node_type = 1
+			var branchHash string
+			branchHash = mpt.insertHelper("", restDecode, oldValue, branchNode)
+			branchHash = mpt.insertHelper(branchHash, restPath, value, branchNode)
+
+			if common == 0 {
+				// directly change the node to a branch node, insert the old value and new value to the branch node
+				node = branchNode
+				delete(mpt.db, hashValue)
+				return branchHash
+			}
+			// change the node to a extension node
+			node.flag_value.encoded_prefix = compact_encode(prefix)
+			node.flag_value.value = branchHash
+			return mpt.updateNode(node, hashValue)
+		}
+	}
+
 	// this is a branch node
-	// this is a extension node
-	// this is a leaf node
-	return ""
+	if len(path) == 0 {
+		node.branch_value[16] = value
+		return mpt.updateNode(node, hashValue)
+	}
+	firstKey := path[0]
+	restKey := path[1:]
+	if node.branch_value[firstKey] == "" {
+		var newLeaf Node
+		newLeafHash := mpt.insertHelper("", restKey, value, newLeaf)
+		node.branch_value[firstKey] = newLeafHash
+		return mpt.updateNode(node, hashValue)
+	}
+	nextHash := node.branch_value[firstKey]
+	nextNode := mpt.db[nextHash]
+	newNextHash := mpt.insertHelper(nextHash, restKey, value, nextNode)
+	node.branch_value[firstKey] = newNextHash
+	return mpt.updateNode(node, hashValue)
+}
+
+func (mpt *MerklePatriciaTrie) updateNode(node Node, oldHash string) string {
+	if oldHash != "" {
+		delete(mpt.db, oldHash)
+	}
+	newHash := node.hash_node()
+	mpt.db[newHash] = node
+	return newHash
 }
 
 func newLeaf(path []uint8, value string) (string, Node) {
@@ -118,13 +255,174 @@ func newLeaf(path []uint8, value string) (string, Node) {
 	return hashNode, newNode
 }
 
-func (mpt *MerklePatriciaTrie) Delete(key string) (string, error) {
+func (mpt *MerklePatriciaTrie) Delete(key string) string {
 	// TODO
-	return "", errors.New("path_not_found")
+	path := getHexArray(key)
+	if mpt.root == "" {
+		return "path_not_found"
+	}
+	rootNode := mpt.db[mpt.root]
+	var status int
+	mpt.root, status = mpt.deleteHelper(mpt.root, path, rootNode)
+	if status == -1 {
+		return "path_not_found"
+	}
+	return ""
+}
+
+func (mpt *MerklePatriciaTrie) deleteHelper(oldHash string, path []uint8, node Node) (newHash string, nodeType int) {
+	// node type = 0
+	if node.node_type == 0 {
+		return "", -1
+	}
+
+	if node.node_type == 2 {
+		encodedPrefix := node.flag_value.encoded_prefix
+		decode := compact_decode(encodedPrefix)
+		n := len(decode)
+		lenPath := len(path)
+		var com int
+		for com = 0; com < n && com < lenPath; com++ {
+			if path[com] != decode[com] {
+				break
+			}
+		}
+
+		if encodedPrefix[0]/16 < 2 {
+			// extension node
+			if com != n { // end find, report error
+				return oldHash, -1
+			} else { // can go down
+				nextPath := path[com:]
+				nextHash := node.flag_value.value
+				nextNode := mpt.db[nextHash]
+				newNextHash, nextNodeType := mpt.deleteHelper(nextHash, nextPath, nextNode)
+
+				if nextNodeType == -1 { // still not found below
+					return oldHash, -1
+				}
+				if nextNodeType == 1 { // next is a branch node, OK
+					node.flag_value.value = newNextHash
+					return mpt.updateNode(node, oldHash), 3
+				}
+				if nextNodeType == 2 || nextNodeType == 3 { // next is leaf node or extension node, need to be changed
+					nextLeafValue := nextNode.flag_value.value
+					nextLeafDecode := compact_encode(nextNode.flag_value.encoded_prefix)
+					delete(mpt.db, newNextHash)
+
+					node.flag_value.value = nextLeafValue
+					decode = append(decode, nextLeafDecode...)
+					if nextNodeType == 2 {
+						decode = append(decode, 16)
+					}
+					node.flag_value.encoded_prefix = compact_encode(decode)
+					return mpt.updateNode(node, oldHash), nextNodeType
+				}
+
+			}
+		} else {
+			// leaf node
+			if lenPath == n && com == n { // completely same, can be deleted
+				delete(mpt.db, oldHash)
+				return "", 0
+			} else {
+				return oldHash, -1
+			}
+		}
+	}
+
+	// branch node
+	if len(path) == 0 {
+		if node.branch_value[16] == "" {
+			return oldHash, -1
+		}
+		node.branch_value[16] = ""
+	} else {
+		first := path[0]
+		nextPath := path[1:]
+
+		if node.branch_value[first] == "" { // search failed, can not go down, nothing need to be changed
+			return oldHash, -1
+		} else { // can go down
+			nextNodeHash := node.branch_value[first]
+			nextNode := mpt.db[nextNodeHash]
+			newNextHash, status := mpt.deleteHelper(nextNodeHash, nextPath, nextNode)
+			if status == -1 {
+				return oldHash, -1
+			}
+			node.branch_value[first] = newNextHash
+		}
+	}
+	// finish update the branch, then check if need to change the branch node
+	loc := node.checkNumLeaf()
+	if loc == -1 { // there is 2 or more leaf, no need to be changed
+		return mpt.updateNode(node, oldHash), 1
+	}
+	if loc == 16 { // only branch itself saved a value, change to leaf
+		node.node_type = 2
+		value := node.branch_value[16]
+		node.branch_value[16] = ""
+		node.flag_value.value = value
+		node.flag_value.encoded_prefix = compact_encode([]uint8{16})
+		return mpt.updateNode(node, oldHash), 2
+	}
+	nextNodeHash := node.branch_value[loc]
+	nextNode := mpt.db[nextNodeHash]
+	nextNodeType := nextNode.node_type
+
+	if nextNodeType == 2 {
+		nextNodeEncode := nextNode.flag_value.encoded_prefix
+		nextNodeDecode := compact_decode(nextNodeEncode)
+		nextNodeValue := nextNode.flag_value.value
+
+		node.node_type = 2
+		node.branch_value[loc] = ""
+		node.flag_value.value = nextNodeValue
+		prefix := append([]uint8{uint8(loc)}, nextNodeDecode...)
+		var resType int = 2
+		if nextNodeEncode[0]/16 >= 2 { // leaf
+			prefix = append(prefix, 16)
+			resType = 3
+		}
+		node.flag_value.encoded_prefix = compact_encode(prefix)
+		delete(mpt.db, nextNodeHash)
+		return mpt.updateNode(node, oldHash), resType
+	}
+
+	if nextNodeType == 1 { // next is a branch node, change this node to extension
+		node.node_type = 2
+		node.branch_value[loc] = ""
+		node.flag_value.value = nextNodeHash
+		node.flag_value.encoded_prefix = compact_encode([]uint8{uint8(loc)})
+		return mpt.updateNode(node, oldHash), 1
+	}
+
+	return oldHash, -1
+}
+
+func (node *Node) checkNumLeaf() int {
+	if node.node_type != 1 {
+		return -1
+	}
+	var res int = 0
+	var cur int = -1
+	branch := node.branch_value
+	for i := 0; i < 17; i++ {
+		if branch[i] != "" {
+			res++
+			cur = i
+		}
+	}
+	if res == 1 {
+		return cur
+	}
+	return -1
 }
 
 func (mpt *MerklePatriciaTrie) Test(key string) {
-	fmt.Println(mpt.db["not exist"].node_type)
+	//fmt.Println(mpt.db[""].node_type)
+	var node Node
+	fmt.Println(mpt.db[node.branch_value[3]].String())
 	//hex1 := getHexArray(key)
 	//fmt.Println(hex1)
 	//
