@@ -4,7 +4,9 @@ import (
 	"../p1"
 	"bytes"
 	"encoding/gob"
+	"encoding/hex"
 	"encoding/json"
+	"golang.org/x/crypto/sha3"
 	"time"
 )
 
@@ -37,7 +39,13 @@ func (b *Block) Initial(height int32, parentHash string, value p1.MerklePatricia
 	b.value = value
 
 	b.header.size = getMPTLength(value)
-	b.header.hash = string(b.header.height) + string(b.header.timeStamp) + b.header.parentHash + b.value.GetRoot() + string(b.header.size)
+	str := string(b.header.height) + string(b.header.timeStamp) + b.header.parentHash + b.value.GetRoot() + string(b.header.size)
+	b.header.hash = HashBlock(str)
+}
+
+func HashBlock(str string) string {
+	sum := sha3.Sum256([]byte(str))
+	return hex.EncodeToString(sum[:])
 }
 
 func DecodeFromJson(js string) Block {
