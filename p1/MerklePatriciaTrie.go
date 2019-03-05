@@ -21,8 +21,17 @@ type Node struct {
 }
 
 type MerklePatriciaTrie struct {
-	db   map[string]Node
-	root string
+	db       map[string]Node
+	keyValue map[string]string
+	root     string
+}
+
+func (mpt *MerklePatriciaTrie) GetRoot() string {
+	return mpt.root
+}
+
+func (mpt *MerklePatriciaTrie) GetLeafMap() map[string]string {
+	return mpt.keyValue
 }
 
 func (mpt *MerklePatriciaTrie) Get(key string) (string, error) {
@@ -83,12 +92,13 @@ func (mpt *MerklePatriciaTrie) Insert(key string, new_value string) {
 	if mpt.root == "" {
 		var newRoot Node
 		mpt.root = mpt.insertHelper("", path, new_value, newRoot)
+		mpt.keyValue[key] = new_value
 		return
 	}
 
 	rootNode := mpt.db[mpt.root]
-	//delete(mpt.db, mpt.root)
 	newRootString := mpt.insertHelper(mpt.root, path, new_value, rootNode)
+	mpt.keyValue[key] = new_value
 	mpt.root = newRootString
 }
 
@@ -256,10 +266,6 @@ func (mpt *MerklePatriciaTrie) insertHelper(hashValue string, path []uint8, valu
 }
 
 func (mpt *MerklePatriciaTrie) updateNode(node Node, oldHash string) string {
-	//if oldHash != "" {
-	//	fmt.Println(oldHash)
-	//	delete(mpt.db, oldHash)
-	//}
 	newHash := node.hash_node()
 	mpt.db[newHash] = node
 
@@ -291,6 +297,7 @@ func (mpt *MerklePatriciaTrie) Delete(key string) string {
 	if status == -1 {
 		return "path_not_found"
 	}
+	delete(mpt.keyValue, key)
 	return ""
 }
 
@@ -341,7 +348,7 @@ func (mpt *MerklePatriciaTrie) deleteHelper(oldHash string, path []uint8, node N
 						decode = append(decode, 16)
 					}
 					node.flag_value.encoded_prefix = compact_encode(decode)
-					fmt.Println("this node ***** : ", node.String())
+					//fmt.Println("this node ***** : ", node.String())
 					return mpt.updateNode(node, oldHash), nextNodeType
 				}
 
@@ -445,21 +452,6 @@ func (node *Node) checkNumLeaf() int {
 	return -1
 }
 
-//func (mpt *MerklePatriciaTrie) Test(key string) {
-//	//fmt.Println(mpt.db[""].node_type)
-//	var node Node
-//	fmt.Println(mpt.db[node.branch_value[3]].String())
-//	//hex1 := getHexArray(key)
-//	//fmt.Println(hex1)
-//	//
-//	//hex2 := compact_encode(hex1)
-//	//fmt.Println(hex2)
-//
-//	//hex3 := compact_encode([]uint8{1,1,2,3,4,5,})
-//	//fmt.Println(hex3)
-//	//test_compact_encode()
-//}
-
 func (mpt *MerklePatriciaTrie) MyTest() {
 	mpt.Initial()
 	mpt.Insert("p", "apple")
@@ -474,7 +466,7 @@ func getHexArray(key string) []uint8 {
 		last := i % 16
 		res = append(res, first, last)
 	}
-	fmt.Println("key: ", key, " hex: ", res)
+	//fmt.Println("key: ", key, " hex: ", res)
 	return res
 }
 
@@ -577,6 +569,7 @@ func node_to_string(node Node) string {
 
 func (mpt *MerklePatriciaTrie) Initial() {
 	mpt.db = make(map[string]Node)
+	mpt.keyValue = make(map[string]string)
 }
 
 func is_ext_node(encoded_arr []uint8) bool {

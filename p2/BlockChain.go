@@ -58,9 +58,9 @@ func (bc *BlockChain) DecodeFromJSON(js string) (BlockChain, error) {
 		block := BlockJSONToBlock(bj)
 		bc.Insert(block)
 	}
-	fmt.Println("height 1: ", len(bc.Chain[1]))
-	fmt.Println("height 2: ", len(bc.Chain[2]))
-	fmt.Println("height 3: ", len(bc.Chain[3]))
+	//fmt.Println("height 1: ", len(bc.Chain[1]))
+	//fmt.Println("height 2: ", len(bc.Chain[2]))
+	//fmt.Println("height 3: ", len(bc.Chain[3]))
 	return *bc, err
 }
 
